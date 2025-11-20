@@ -561,8 +561,23 @@ fun ExpandableFab(navController: NavController) {
                 ) {
                     FabOption(label = label, icon = icon) {
                         expanded = false
-                        navController.navigate(Screen.CreateNote.route(noteId = null, noteType = noteType))
+
+                        when (label) {
+                            "Drawing" -> {
+                                navController.navigate(Screen.Drawing.route)
+                            }
+
+                            "Text" -> {
+                                navController.navigate(Screen.CreateNote.route(noteId = null, noteType = NoteType.TEXT))
+                            }
+
+                            "List" -> {
+                                navController.navigate(Screen.CreateNote.route(noteId = null, noteType = NoteType.LIST))
+                            }
+
+                        }
                     }
+
                 }
             }
             Spacer(modifier = Modifier.height(8.dp))

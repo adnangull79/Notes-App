@@ -26,6 +26,7 @@ sealed class Screen(val route: String) {
     object Favorites : Screen("favorites")
     object Archived : Screen("archived")
     object Trash : Screen("trash")
+    object Drawing : Screen("drawing")
 
 
 
