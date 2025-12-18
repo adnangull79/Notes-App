@@ -4,6 +4,7 @@ import androidx.room.Entity
 import androidx.room.ForeignKey
 import androidx.room.Index
 import androidx.room.PrimaryKey
+import com.example.notepad.CreatNotes1.ChecklistItem
 
 @Entity(
     tableName = "notes",
@@ -24,15 +25,17 @@ data class NoteEntity(
     val content: String?,
     val checklistItems: List<ChecklistItem>?, // If list note type is used
     val audioPath: String?,
-    val drawingPath: String?,
+    val drawingData: String?,  // ✅ CHANGED: stores JSON string of drawing strokes
     val createdAt: Long = System.currentTimeMillis(),
     val lastEditedAt: Long = System.currentTimeMillis(),
 
     // NEW FIELDS FOR FAVORITE, ARCHIVE, TRASH
     val isFavorite: Boolean = false,
     val isArchived: Boolean = false,
-    val isDeleted: Boolean = false // Soft delete - goes to Trash instead of permanent delete
+    val isDeleted: Boolean = false, // Soft delete - goes to Trash instead of permanent delete
+    val noteType: NoteType = NoteType.TEXT
 )
+
 @Entity(tableName = "folders")
 data class FolderEntity(
     @PrimaryKey(autoGenerate = true) val id: Int = 0,

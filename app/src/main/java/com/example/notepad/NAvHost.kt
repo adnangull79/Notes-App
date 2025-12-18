@@ -15,10 +15,13 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
-import com.example.notepad.CreatNotes1.CreateNoteScreen
+import com.example.notepad.Audio.AudioNotesScreen
 
+import com.example.notepad.CreatNotes1.CreateNoteScreen
 import com.example.notepad.Drawing.DrawingScreen
 import com.example.notepad.Screens.*
+// ✅ ADD THIS IMPORT
+
 
 @RequiresApi(Build.VERSION_CODES.VANILLA_ICE_CREAM)
 @Composable
@@ -47,11 +50,24 @@ fun AppNavigation() {
                     noteViewModel = noteViewModel
                 )
             }
-            composable(Screen.Drawing.route) {
-                DrawingScreen(
-                    onNavigateBack = {
-                        navController.popBackStack()
+
+            // Drawing route with optional noteId
+            composable(
+                route = "drawing?noteId={noteId}",
+                arguments = listOf(
+                    navArgument("noteId") {
+                        type = NavType.IntType
+                        defaultValue = -1
                     }
+                )
+            ) { backStackEntry ->
+                val rawId = backStackEntry.arguments?.getInt("noteId") ?: -1
+                val noteId: Int? = if (rawId == -1) null else rawId
+
+                DrawingScreen(
+                    onNavigateBack = { navController.popBackStack() },
+                    noteViewModel = noteViewModel,
+                    noteId = noteId
                 )
             }
 
@@ -59,10 +75,6 @@ fun AppNavigation() {
             composable(Screen.Folders.route) {
                 FoldersScreen(navController, viewModel())
             }
-
-//            composable(Screen.Search.route) {
-//                SearchScreen(navController, viewModel())
-//            }
 
             composable(Screen.Settings.route) {
                 SettingsScreen(navController)
@@ -77,11 +89,6 @@ fun AppNavigation() {
                 arguments = listOf(navArgument("folderId") { type = NavType.IntType })
             ) { backStackEntry ->
                 val folderId = backStackEntry.arguments?.getInt("folderId") ?: -1
-//                FolderNotesScreen(
-//                    navController = navController,
-//                    noteViewModel = noteViewModel,
-//                    folderId = folderId
-//                )
             }
 
             composable(Screen.Favorites.route) {
@@ -116,7 +123,7 @@ fun AppNavigation() {
                 val noteType = runCatching { NoteType.valueOf(typeString) }
                     .getOrDefault(NoteType.TEXT)
 
-                // 🔥 FINAL: Route to correct screen based on noteType
+                // 🔥 Route to correct screen based on noteType
                 when (noteType) {
 
                     NoteType.TEXT -> CreateNoteScreen(
@@ -131,13 +138,14 @@ fun AppNavigation() {
                         onNavigateBack = { navController.popBackStack() }
                     )
 
-                    NoteType.AUDIO -> AudioNoteScreen(
+                    // ✅ UPDATED: Route to AudioNotesScreen
+                    NoteType.AUDIO -> AudioNotesScreen(
                         noteId = noteId,
                         noteViewModel = noteViewModel,
                         onNavigateBack = { navController.popBackStack() }
                     )
 
-                    NoteType.DRAWING -> DrawingNoteScreen(
+                    NoteType.DRAWING -> DrawingScreen(
                         noteId = noteId,
                         noteViewModel = noteViewModel,
                         onNavigateBack = { navController.popBackStack() }
@@ -146,14 +154,4 @@ fun AppNavigation() {
             }
         }
     }
-}
-
-@Composable
-fun DrawingNoteScreen(noteId: Int?, noteViewModel: NoteViewModel, onNavigateBack: () -> Boolean) {
-
-}
-
-@Composable
-fun AudioNoteScreen(noteId: Int?, noteViewModel: NoteViewModel, onNavigateBack: () -> Boolean) {
-
 }

@@ -53,6 +53,7 @@ import com.example.notepad.NoteType
 import com.example.notepad.NoteViewModel
 import com.example.notepad.Screen
 import com.example.notepad.UI_theme.CategoryKey
+import com.example.notepad.UI_theme.ThemeController
 import com.example.notepad.UI_theme.categoryContainerColor
 import com.example.notepad.UI_theme.categoryIconColor
 import kotlinx.coroutines.delay
@@ -166,13 +167,22 @@ fun NotesScreen(navController: NavController, noteViewModel: NoteViewModel) {
                 selectedNotes = selectedNotes,
                 viewMode = viewMode,
                 onNoteClick = { note ->
-                    // Toggle selection if in selection mode, otherwise navigate
                     if (isSelectionMode) {
-                        selectedNotes = if (selectedNotes.contains(note.id)) selectedNotes - note.id else selectedNotes + note.id
-                        if (!isSelectionMode) isSelectionMode = true // Enter selection mode on first click
+                        selectedNotes = if (selectedNotes.contains(note.id))
+                            selectedNotes - note.id
+                        else
+                            selectedNotes + note.id
+                        if (!isSelectionMode) isSelectionMode = true
                     } else {
-                        val noteType = detectNoteType(note.content)
-                        navController.navigate(Screen.CreateNote.route(note.id, noteType))
+                        // ✅ Route based on noteType
+                        when (note.noteType) {
+                            NoteType.DRAWING -> navController.navigate("drawing?noteId=${note.id}")
+                            NoteType.AUDIO -> navController.navigate(Screen.CreateNote.route(note.id, NoteType.AUDIO))
+                            else -> {
+                                val noteType = detectNoteType(note.content)
+                                navController.navigate(Screen.CreateNote.route(note.id, noteType))
+                            }
+                        }
                     }
                 },
                 onNoteLongClick = { note ->
@@ -564,7 +574,7 @@ fun ExpandableFab(navController: NavController) {
 
                         when (label) {
                             "Drawing" -> {
-                                navController.navigate(Screen.Drawing.route)
+                                navController.navigate("drawing?noteId=-1")
                             }
 
                             "Text" -> {
@@ -573,6 +583,9 @@ fun ExpandableFab(navController: NavController) {
 
                             "List" -> {
                                 navController.navigate(Screen.CreateNote.route(noteId = null, noteType = NoteType.LIST))
+                            }
+                            "Audio" -> {
+                                navController.navigate(Screen.CreateNote.route(noteId = null, noteType = NoteType.AUDIO))
                             }
 
                         }
@@ -732,7 +745,7 @@ fun NoteCard(
     onLongClick: () -> Unit
 ) {
     val folder = folders.find { it.id == note.folderId }
-    val noteType = detectNoteType(note.content)
+    val noteType = note.noteType  // ✅ Use the actual noteType field from database
     val (icon, bg, fg) = noteIconAndColors(note, folder, noteType)
 
     val absoluteDate = SimpleDateFormat("MMM dd, yyyy", Locale.getDefault()).format(Date(note.lastEditedAt))
@@ -854,7 +867,7 @@ fun NoteCardGrid(
     onLongClick: () -> Unit
 ) {
     val folder = folders.find { it.id == note.folderId }
-    val noteType = detectNoteType(note.content)
+    val noteType = note.noteType  // ✅ Use the actual noteType field from database
     val (icon, bg, fg) = noteIconAndColors(note, folder, noteType)
 
     Surface(
@@ -965,20 +978,55 @@ private fun noteIconAndColors(
     folder: FolderEntity?,
     noteType: NoteType
 ): Triple<ImageVector, Color, Color> {
+    // Checklist icon (current green/teal color)
     if (noteType == NoteType.LIST) {
         val bg = categoryContainerColor(CategoryKey.CHECKLIST)
         val fg = categoryIconColor(CategoryKey.CHECKLIST)
         return Triple(Icons.Default.Checklist, bg, fg)
     }
 
-    val iconName = folder?.iconName ?: "Folder"
-    val colorKey = folder?.colorKey ?: CategoryKey.PERSONAL.name
+    // Drawing notes
+    if (noteType == NoteType.DRAWING) {
+        val bg = if (ThemeController.isDarkTheme)
+            Color(0xFF2A0D0B)   // Dark red container (matches your CORAL dark palette)
+        else
+            Color(0xFFFFEBEE)   // Light red container
 
-    val icon = getFolderIcon(iconName)
-    val bg = categoryContainerColor(CategoryKey.valueOf(colorKey))
-    val fg = categoryIconColor(CategoryKey.valueOf(colorKey))
+        val fg = if (ThemeController.isDarkTheme)
+            Color(0xFFFCA5A5)   // Light red icon (bright for dark mode)
+        else
+            Color(0xFFD32F2F)   // Red icon
 
-    return Triple(icon, bg, fg)
+        return Triple(Icons.Default.Brush, bg, fg)
+    }
+    // Audio notes
+    if (noteType == NoteType.AUDIO) {
+        val bg = if (ThemeController.isDarkTheme)
+            Color(0xFF1A1A2E)   // Dark purple container
+        else
+            Color(0xFFEDE7F6)   // Light purple container
+
+        val fg = if (ThemeController.isDarkTheme)
+            Color(0xFFB794F4)   // Light purple icon
+        else
+            Color(0xFF7E57C2)   // Purple icon
+
+        return Triple(Icons.Default.Mic, bg, fg)
+    }
+
+// Text notes (default)
+    val bg = if (ThemeController.isDarkTheme)
+        Color(0xFF0F1F16)    // Deep teal from your IDEAS dark palette
+    else
+        Color(0xFFE8F5E9)    // Light green pastel
+
+    val fg = if (ThemeController.isDarkTheme)
+        Color(0xFF34D399)    // Bright green icon for dark mode
+    else
+        Color(0xFF2E7D32)    // Green icon
+
+    return Triple(Icons.Default.Description, bg, fg)
+
 }
 
 private fun getFolderIcon(iconName: String): ImageVector {

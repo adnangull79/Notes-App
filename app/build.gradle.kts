@@ -3,6 +3,7 @@ plugins {
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
     id("com.google.devtools.ksp")
+    id("org.jetbrains.kotlin.plugin.serialization") version "1.9.0"
 }
 
 android {
@@ -86,8 +87,12 @@ dependencies {
     // Navigation
     implementation("androidx.navigation:navigation-compose:2.7.7")
 
-        implementation("org.burnoutcrew.composereorderable:reorderable:0.9.6")
-    
+    implementation("org.burnoutcrew.composereorderable:reorderable:0.9.6")
+
+    implementation ("joda-time:joda-time:2.10.13")
+
+    // ✅ ADD THIS
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.0")
 
 
     // Testing

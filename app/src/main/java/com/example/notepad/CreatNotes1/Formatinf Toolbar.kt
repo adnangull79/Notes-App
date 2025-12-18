@@ -17,6 +17,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -27,6 +28,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
+import com.example.notepad.R
+import kotlinx.coroutines.launch
 import kotlin.math.max
 import kotlin.math.min
 
@@ -51,12 +54,15 @@ fun FormattingToolbar(
     onShowColorPicker: () -> Unit,
     textColor: Color,
     bottomBarIconColor: Color,
-    onAddDrawing: () -> Unit
+    onAddDrawing: () -> Unit,
+    onCheckboxClick: () -> Unit = {},
+    isInChecklistMode: Boolean = false,
+    onApplyHighlightColor: (Color) -> Unit = {},
+    // ✅ NEW: Audio recording callback
+    onMicrophoneClick: () -> Unit = {}
 ) {
     var showTextFormatOptions by remember { mutableStateOf(false) }
     var showParagraphFormatOptions by remember { mutableStateOf(false) }
-    var showImagePopup by remember { mutableStateOf(false) }
-    var showMoreSheet by remember { mutableStateOf(false) }
     var showTextColorBar by remember { mutableStateOf(false) }
     var showHighlightColorBar by remember { mutableStateOf(false) }
     var previousToolbarState by remember { mutableStateOf<String?>(null) }
@@ -72,7 +78,6 @@ fun FormattingToolbar(
                         showTextColorBar || showHighlightColorBar
 
                 if (showAnyFormatOptions) {
-                    // Format Options Toolbar (Text/Paragraph/Colors)
                     FormatOptionsToolbarContent(
                         showTextFormatOptions = showTextFormatOptions,
                         showParagraphFormatOptions = showParagraphFormatOptions,
@@ -118,10 +123,10 @@ fun FormattingToolbar(
                             showTextColorBar = false
                             showTextFormatOptions = false
                             showParagraphFormatOptions = false
-                        }
+                        },
+                        onApplyHighlightColor = onApplyHighlightColor
                     )
                 } else {
-                    // Main Toolbar (default view)
                     MainToolbarContent(
                         onTextFormatClick = {
                             showTextFormatOptions = true
@@ -131,19 +136,11 @@ fun FormattingToolbar(
                             showParagraphFormatOptions = true
                             showTextFormatOptions = false
                         },
-                        onCheckboxClick = {
-                            onContentChange(insertCheckboxAtCursor(contentText))
-                            onPushHistory()
-                        },
-                        onMicrophoneClick = {
-                            // Empty for now
-                        },
-                        onImageClick = {
-                            showImagePopup = !showImagePopup
-                        },
-                        onMoreClick = {
-                            showMoreSheet = true
-                        },
+                        onCheckboxClick = onCheckboxClick,
+                        isInChecklistMode = isInChecklistMode,
+                        // ✅ WIRE UP MICROPHONE CALLBACK
+                        onMicrophoneClick = onMicrophoneClick,
+                        onAddDrawing = onAddDrawing,
                         onUndoClick = onUndo,
                         onRedoClick = onRedo,
                         canUndo = canUndo,
@@ -154,39 +151,20 @@ fun FormattingToolbar(
                 }
             }
         }
-
-        // More Bottom Sheet
-        if (showMoreSheet) {
-            MoreOptionsSheet(
-                onDismiss = { showMoreSheet = false },
-                onShowColorPicker = onShowColorPicker,
-                onAddDrawing = onAddDrawing
-            )
-
-
-
-        }
-    }
-
-    // Image Popup (separate from main Box, positioned independently)
-    if (showImagePopup) {
-        ImageOptionsPopup(
-            onDismiss = { showImagePopup = false }
-        )
     }
 }
 
 /**
- * Main Toolbar Content - Default view with primary actions (NO SCROLLING)
+ * Main Toolbar Content - Default view with primary actions
  */
 @Composable
 private fun MainToolbarContent(
     onTextFormatClick: () -> Unit,
     onParagraphFormatClick: () -> Unit,
     onCheckboxClick: () -> Unit,
+    isInChecklistMode: Boolean = false,
     onMicrophoneClick: () -> Unit,
-    onImageClick: () -> Unit,
-    onMoreClick: () -> Unit,
+    onAddDrawing: () -> Unit,
     onUndoClick: () -> Unit,
     onRedoClick: () -> Unit,
     canUndo: Boolean,
@@ -233,20 +211,25 @@ private fun MainToolbarContent(
                 )
             }
 
-            // Checkbox Insert
+            // Checkbox Toggle
             IconButton(
                 onClick = onCheckboxClick,
-                modifier = Modifier.size(40.dp)
+                modifier = Modifier.size(40.dp),
+                colors = IconButtonDefaults.iconButtonColors(
+                    contentColor = if (isInChecklistMode)
+                        MaterialTheme.colorScheme.primary
+                    else
+                        bottomBarIconColor
+                )
             ) {
                 Icon(
-                    Icons.Default.CheckBoxOutlineBlank,
+                    if (isInChecklistMode) Icons.Default.CheckBox else Icons.Default.CheckBoxOutlineBlank,
                     "Checkbox",
-                    tint = bottomBarIconColor,
                     modifier = Modifier.size(22.dp)
                 )
             }
 
-            // Microphone (Audio)
+            // ✅ MICROPHONE - NOW FUNCTIONAL
             IconButton(
                 onClick = onMicrophoneClick,
                 modifier = Modifier.size(40.dp)
@@ -259,30 +242,39 @@ private fun MainToolbarContent(
                 )
             }
 
-            // Image
+            // Drawing Button
             IconButton(
-                onClick = onImageClick,
+                onClick = onAddDrawing,
                 modifier = Modifier.size(40.dp)
             ) {
                 Icon(
-                    Icons.Default.Image,
-                    "Image",
+                    Icons.Default.Brush,
+                    "Drawing",
                     tint = bottomBarIconColor,
                     modifier = Modifier.size(22.dp)
                 )
             }
 
-            // More Options
-            IconButton(
-                onClick = onMoreClick,
-                modifier = Modifier.size(40.dp)
-            ) {
-                Icon(
-                    Icons.Default.MoreVert,
-                    "More",
-                    tint = bottomBarIconColor,
-                    modifier = Modifier.size(22.dp)
-                )
+            // Camera Button & Popup
+            var showCameraPopup by remember { mutableStateOf(false) }
+            Box {
+                IconButton(
+                    onClick = { showCameraPopup = !showCameraPopup },
+                    modifier = Modifier.size(40.dp)
+                ) {
+                    Icon(
+                        Icons.Default.CameraAlt,
+                        "Camera",
+                        tint = if(showCameraPopup) MaterialTheme.colorScheme.primary else bottomBarIconColor,
+                        modifier = Modifier.size(22.dp)
+                    )
+                }
+
+                if (showCameraPopup) {
+                    CameraOptionsPopup(
+                        onDismiss = { showCameraPopup = false }
+                    )
+                }
             }
         }
 
@@ -291,34 +283,6 @@ private fun MainToolbarContent(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(0.dp)
         ) {
-            // Undo
-            IconButton(
-                onClick = onUndoClick,
-                enabled = canUndo,
-                modifier = Modifier.size(40.dp)
-            ) {
-                Icon(
-                    Icons.Default.Undo,
-                    "Undo",
-                    tint = if (canUndo) bottomBarIconColor else bottomBarIconColor.copy(alpha = 0.3f),
-                    modifier = Modifier.size(22.dp)
-                )
-            }
-
-            // Redo
-            IconButton(
-                onClick = onRedoClick,
-                enabled = canRedo,
-                modifier = Modifier.size(40.dp)
-            ) {
-                Icon(
-                    Icons.Default.Redo,
-                    "Redo",
-                    tint = if (canRedo) bottomBarIconColor else bottomBarIconColor.copy(alpha = 0.3f),
-                    modifier = Modifier.size(22.dp)
-                )
-            }
-
             // Hide bar
             IconButton(
                 onClick = onHideBar,
@@ -334,6 +298,8 @@ private fun MainToolbarContent(
         }
     }
 }
+
+
 
 /**
  * Format Options Toolbar - Shows Text/Paragraph/Color options
@@ -354,7 +320,8 @@ private fun FormatOptionsToolbarContent(
     bottomBarIconColor: Color,
     onClose: () -> Unit,
     onShowTextColorBar: () -> Unit,
-    onShowHighlightColorBar: () -> Unit
+    onShowHighlightColorBar: () -> Unit,
+    onApplyHighlightColor: (Color) -> Unit
 ) {
     Row(
         modifier = Modifier
@@ -426,7 +393,8 @@ private fun FormatOptionsToolbarContent(
                             contentText = contentText,
                             onApplyFormatting = onApplyFormatting,
                             textColor = textColor,
-                            bottomBarIconColor = bottomBarIconColor
+                            bottomBarIconColor = bottomBarIconColor,
+                            onApplyHighlightColor = onApplyHighlightColor
                         )
                     }
                 }
@@ -437,7 +405,6 @@ private fun FormatOptionsToolbarContent(
 
 /**
  * Text Format Options - Bold, Italic, Underline, etc.
- * FIXED: Properly toggles formatting on/off
  */
 @Composable
 private fun TextFormatOptions(
@@ -648,7 +615,7 @@ private fun TextFormatOptions(
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
-                        Icons.Default.Highlight,
+                        painter = painterResource(R.drawable.highlighter),
                         contentDescription = "Highlight",
                         tint = bottomBarIconColor,
                         modifier = Modifier
@@ -768,7 +735,6 @@ private fun buildTextDecoration(isUnderline: Boolean, isStrikethrough: Boolean):
 
 /**
  * Paragraph Format Options - Bullets, Alignment, Indent, etc.
- * REMOVED: Blockquote option
  */
 @Composable
 private fun ParagraphFormatOptions(
@@ -957,7 +923,6 @@ private fun ParagraphFormatOptions(
 
 /**
  * Text Color Bar - Color picker for text color
- * FIXED: Reset to default color now works properly
  */
 @Composable
 private fun TextColorBar(
@@ -1081,7 +1046,9 @@ private fun TextColorBar(
 
 /**
  * Highlight Color Bar - Color picker for highlight/background color
- * FIXED: Reset to no highlight now works properly
+ */
+/**
+ * Highlight Color Bar - Color picker for highlight/background color
  */
 @Composable
 private fun HighlightColorBar(
@@ -1090,7 +1057,8 @@ private fun HighlightColorBar(
     contentText: TextFieldValue,
     onApplyFormatting: (Int, Int, SpanStyle) -> Unit,
     textColor: Color,
-    bottomBarIconColor: Color
+    bottomBarIconColor: Color,
+    onApplyHighlightColor: (Color) -> Unit
 ) {
     Row(
         horizontalArrangement = Arrangement.spacedBy(4.dp),
@@ -1104,28 +1072,20 @@ private fun HighlightColorBar(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null
                 ) {
+                    println("⭐⭐⭐ NO COLOR CLICKED")
+                    println("⭐⭐⭐ Color.Unspecified = ${Color.Unspecified}")
+
                     val selection = contentText.selection
                     val start = min(selection.start, selection.end)
                     val end = max(selection.start, selection.end)
 
                     if (start < end) {
-                        val resetStyle = SpanStyle(
-                            color = if (formatState.textColor != Color.Unspecified)
-                                formatState.textColor else textColor,
-                            fontWeight = if (formatState.isBold || formatState.isH1 || formatState.isH2)
-                                FontWeight.Bold else FontWeight.Normal,
-                            fontStyle = if (formatState.isItalic) FontStyle.Italic else FontStyle.Normal,
-                            textDecoration = buildTextDecoration(formatState.isUnderline, formatState.isStrikethrough),
-                            fontSize = when {
-                                formatState.isH1 -> 28.sp
-                                formatState.isH2 -> 22.sp
-                                else -> 16.sp
-                            },
-                            background = Color.Unspecified
-                        )
-                        onApplyFormatting(start, end, resetStyle)
+                        println("⭐⭐⭐ Text selected - calling onApplyHighlightColor")
+                        onApplyHighlightColor(Color.Unspecified)
+                    } else {
+                        println("⭐⭐⭐ No text selected - calling onFormatStateChange")
+                        onFormatStateChange(formatState.copy(highlightColor = Color.Unspecified))
                     }
-                    onFormatStateChange(formatState.copy(highlightColor = Color.Unspecified))
                 }
                 .border(
                     width = if (formatState.highlightColor == Color.Unspecified) 2.dp else 1.dp,
@@ -1168,27 +1128,18 @@ private fun HighlightColorBar(
                         interactionSource = remember { MutableInteractionSource() },
                         indication = null
                     ) {
+                        // ⭐ FIX: Handle both selected and non-selected cases
                         val selection = contentText.selection
                         val start = min(selection.start, selection.end)
                         val end = max(selection.start, selection.end)
+
                         if (start < end) {
-                            val style = SpanStyle(
-                                color = if (formatState.textColor != Color.Unspecified)
-                                    formatState.textColor else textColor,
-                                fontWeight = if (formatState.isBold || formatState.isH1 || formatState.isH2)
-                                    FontWeight.Bold else FontWeight.Normal,
-                                fontStyle = if (formatState.isItalic) FontStyle.Italic else FontStyle.Normal,
-                                textDecoration = buildTextDecoration(formatState.isUnderline, formatState.isStrikethrough),
-                                fontSize = when {
-                                    formatState.isH1 -> 28.sp
-                                    formatState.isH2 -> 22.sp
-                                    else -> 16.sp
-                                },
-                                background = color
-                            )
-                            onApplyFormatting(start, end, style)
+                            // Text is selected - apply highlight to selected text
+                            onApplyHighlightColor(color)
+                        } else {
+                            // No text selected - just update format state for new text
+                            onFormatStateChange(formatState.copy(highlightColor = color))
                         }
-                        onFormatStateChange(formatState.copy(highlightColor = color))
                     }
                     .border(
                         width = if (color == formatState.highlightColor) 2.dp else 0.dp,
@@ -1206,226 +1157,69 @@ private fun HighlightColorBar(
 }
 
 /**
- * Image Options Popup - Camera or Gallery
- * FIXED: Now shows as popup above toolbar, doesn't close keyboard
+ * Camera Options Popup - Apple Notes style animation
  */
 @Composable
-private fun ImageOptionsPopup(
+private fun CameraOptionsPopup(
     onDismiss: () -> Unit
 ) {
-    Popup(
-        alignment = Alignment.BottomCenter,
-        offset = androidx.compose.ui.unit.IntOffset(0, -180),
-        onDismissRequest = onDismiss,
-        properties = PopupProperties(
-            focusable = true,
-            dismissOnBackPress = true,
-            dismissOnClickOutside = true
+    var visible by remember { mutableStateOf(false) }
+
+    LaunchedEffect(Unit) {
+        visible = true
+    }
+
+    AnimatedVisibility(
+        visible = visible,
+        enter = slideInVertically(
+            initialOffsetY = { it / 3 }, // Slide up from below
+            animationSpec = tween(durationMillis = 250, easing = FastOutSlowInEasing)
+        ) + fadeIn(
+            animationSpec = tween(durationMillis = 200)
+        ),
+        exit = slideOutVertically(
+            targetOffsetY = { it / 3 }, // Slide down
+            animationSpec = tween(durationMillis = 200, easing = LinearOutSlowInEasing)
+        ) + fadeOut(
+            animationSpec = tween(durationMillis = 150)
         )
     ) {
-        Surface(
-            modifier = Modifier
-                .padding(horizontal = 16.dp, vertical = 8.dp)
-                .width(280.dp),
-            shape = RoundedCornerShape(12.dp),
-            color = MaterialTheme.colorScheme.surface,
-            tonalElevation = 8.dp,
-            shadowElevation = 8.dp
+        DropdownMenu(
+            expanded = true,
+            onDismissRequest = {
+                visible = false
+                kotlinx.coroutines.GlobalScope.launch {
+                    kotlinx.coroutines.delay(200) // Wait for animation
+                    onDismiss()
+                }
+            },
+            properties = PopupProperties(
+                focusable = false
+            )
         ) {
-            Column(
-                modifier = Modifier.padding(8.dp)
-            ) {
-                // Camera Option
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable(
-                            interactionSource = remember { MutableInteractionSource() },
-                            indication = null
-                        ) {
-                            // Empty for now
-                            onDismiss()
-                        }
-                        .padding(12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.Start
-                ) {
-                    Icon(
-                        Icons.Default.CameraAlt,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(24.dp)
-                    )
-                    Spacer(modifier = Modifier.width(16.dp))
-                    Column {
-                        Text(
-                            "Take Photo",
-                            fontSize = 16.sp,
-                            fontWeight = FontWeight.Medium,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                        Text(
-                            "Capture from camera",
-                            fontSize = 13.sp,
-                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
-                        )
+            DropdownMenuItem(
+                text = { Text("Take Photo") },
+                leadingIcon = { Icon(Icons.Default.CameraAlt, null) },
+                onClick = {
+                    visible = false
+                    kotlinx.coroutines.GlobalScope.launch {
+                        kotlinx.coroutines.delay(200)
+                        onDismiss()
                     }
                 }
+            )
 
-                Divider(
-                    modifier = Modifier.padding(horizontal = 12.dp),
-                    color = MaterialTheme.colorScheme.outlineVariant
-                )
-
-                // Gallery Option
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable(
-                            interactionSource = remember { MutableInteractionSource() },
-                            indication = null
-                        ) {
-                            // Empty for now
-                            onDismiss()
-                        }
-                        .padding(12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.Start
-                ) {
-                    Icon(
-                        Icons.Default.Image,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(24.dp)
-                    )
-                    Spacer(modifier = Modifier.width(16.dp))
-                    Column {
-                        Text(
-                            "Choose from Gallery",
-                            fontSize = 16.sp,
-                            fontWeight = FontWeight.Medium,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                        Text(
-                            "Select existing photo",
-                            fontSize = 13.sp,
-                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
-                        )
+            DropdownMenuItem(
+                text = { Text("Photo Library") },
+                leadingIcon = { Icon(Icons.Default.PhotoLibrary, null) },
+                onClick = {
+                    visible = false
+                    kotlinx.coroutines.GlobalScope.launch {
+                        kotlinx.coroutines.delay(200)
+                        onDismiss()
                     }
                 }
-            }
-        }
-    }
-}
-
-/**
- * More Options Bottom Sheet - Attachment, Drawing, and Background Color
- */
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun MoreOptionsSheet(
-    onDismiss: () -> Unit,
-    onShowColorPicker: () -> Unit,
-    onAddDrawing: () -> Unit // ⭐ NEW
-)
- {
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = sheetState,
-        containerColor = MaterialTheme.colorScheme.surface,
-        dragHandle = { BottomSheetDefaults.DragHandle() }
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp)
-        ) {
-            Text(
-                "More Options",
-                fontSize = 20.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = MaterialTheme.colorScheme.onSurface,
-                modifier = Modifier.padding(bottom = 16.dp)
             )
-
-            // Attachment Option
-            ListItem(
-                headlineContent = { Text("Attachment", fontSize = 16.sp) },
-                supportingContent = { Text("Attach files or documents", fontSize = 14.sp) },
-                leadingContent = {
-                    Icon(
-                        Icons.Default.AttachFile,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(24.dp)
-                    )
-                },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable(
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null
-                    ) {
-                        // Empty for now
-                        onDismiss()
-                    }
-            )
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            ListItem(
-                headlineContent = { Text("Drawing", fontSize = 16.sp) },
-                supportingContent = { Text("Create sketch or drawing", fontSize = 14.sp) },
-                leadingContent = {
-                    Icon(
-                        Icons.Default.Brush,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(24.dp)
-                    )
-                },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable(
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null
-                    ) {
-                        onDismiss()
-                        onAddDrawing()  // ⭐ CALL THE PASSED-IN FUNCTION
-                    }
-            )
-
-
-
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            // Background Color Option
-            ListItem(
-                headlineContent = { Text("Background Color", fontSize = 16.sp) },
-                supportingContent = { Text("Change note background", fontSize = 14.sp) },
-                leadingContent = {
-                    Icon(
-                        Icons.Default.Palette,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(24.dp)
-                    )
-                },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable(
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null
-                    ) {
-                        onDismiss()
-                        onShowColorPicker()
-                    }
-            )
-
-            Spacer(modifier = Modifier.height(24.dp))
         }
     }
 }

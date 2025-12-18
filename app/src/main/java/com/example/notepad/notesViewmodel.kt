@@ -12,6 +12,15 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 
+import com.example.notepad.Audio.AudioSection
+import com.example.notepad.Audio.AudioData
+import com.example.notepad.Audio.AudioNoteData
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.decodeFromString
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+
 class NoteViewModel(application: Application) : AndroidViewModel(application) {
 
     private val repository: NoteRepository
@@ -124,13 +133,17 @@ class NoteViewModel(application: Application) : AndroidViewModel(application) {
         _notes.value = repository.getTrashNotes()
     }
 
-    // ✅ **Missing function added here**
     suspend fun getNoteById(noteId: Int): NoteEntity? {
         return repository.getNoteById(noteId)
     }
 
-    // ------------- CREATE / UPDATE NOTES -------------
-    fun createNote(folderId: Int, title: String, content: String?) {
+    fun createNote(
+        folderId: Int,
+        title: String,
+        content: String?,
+        drawingData: String? = null,
+        noteType: NoteType = NoteType.TEXT
+    ) {
         viewModelScope.launch {
             val now = System.currentTimeMillis()
             repository.insertNote(
@@ -140,9 +153,10 @@ class NoteViewModel(application: Application) : AndroidViewModel(application) {
                     content = content,
                     checklistItems = null,
                     audioPath = null,
-                    drawingPath = null,
+                    drawingData = drawingData,
                     createdAt = now,
-                    lastEditedAt = now
+                    lastEditedAt = now,
+                    noteType = noteType
                 )
             )
             refreshAfterChange()
@@ -192,7 +206,7 @@ class NoteViewModel(application: Application) : AndroidViewModel(application) {
 
     fun moveToTrash(noteId: Int) {
         viewModelScope.launch {
-            repository.setDeleted(noteId, true)
+            repository.setDeleted(noteId)
             refreshAfterChange()
         }
     }
@@ -224,5 +238,129 @@ class NoteViewModel(application: Application) : AndroidViewModel(application) {
             textDecoration = if (isUnderline) TextDecoration.Underline else TextDecoration.None,
             color = textColor
         )
+    }
+
+    // ------------- AUDIO NOTE FUNCTIONS -------------
+
+    private val json = Json {
+        ignoreUnknownKeys = true
+        encodeDefaults = true
+    }
+
+    /**
+     * Save audio note with multiple audio sections
+     */
+    suspend fun saveAudioNote(
+        noteId: Int?,
+        title: String,
+        audioSections: List<AudioSection>,
+        folderId: Int
+    ): Int {
+        return withContext(Dispatchers.IO) {
+            // Convert AudioSection to AudioData for serialization
+            val audioDataList = audioSections.map { section ->
+                AudioData(
+                    filePath = section.filePath,
+                    duration = section.duration,
+                    timestamp = section.id,
+                    noteText = section.noteText  // ✅ SAVE THE NOTE TEXT
+                )
+            }
+
+            val audioNoteData = AudioNoteData(audios = audioDataList)
+            val audioJson = json.encodeToString(audioNoteData)
+
+            // Store note texts as content (optional - for search/preview)
+            val contentText = audioSections
+                .filter { it.noteText.isNotBlank() }
+                .joinToString("\n---\n") { it.noteText }
+
+            if (noteId != null) {
+                // Update existing note
+                val existingNote = repository.getNoteById(noteId)
+                if (existingNote != null) {
+                    val updatedNote = existingNote.copy(
+                        title = title.ifBlank { "Audio Note" },
+                        content = contentText.ifBlank { null },
+                        drawingData = audioJson,
+                        lastEditedAt = System.currentTimeMillis(),
+                        noteType = NoteType.AUDIO
+                    )
+                    repository.updateNote(updatedNote)
+                    refreshAfterChange()
+                    noteId
+                } else {
+                    -1
+                }
+            } else {
+                // Create new note
+                val newNote = NoteEntity(
+                    folderId = folderId,
+                    title = title.ifBlank { "Audio Note" },
+                    content = contentText.ifBlank { null },
+                    checklistItems = null,
+                    audioPath = null,
+                    drawingData = audioJson,
+                    noteType = NoteType.AUDIO,
+                    createdAt = System.currentTimeMillis(),
+                    lastEditedAt = System.currentTimeMillis()
+                )
+                val id = repository.insertNote(newNote).toInt()
+                refreshAfterChange()
+                id
+            }
+        }
+    }
+
+    /**
+     * Load audio sections from a saved note
+     */
+    suspend fun loadAudioSections(noteId: Int): List<AudioSection> {
+        return withContext(Dispatchers.IO) {
+            try {
+                val note = repository.getNoteById(noteId)
+                if (note != null && note.noteType == NoteType.AUDIO && !note.drawingData.isNullOrBlank()) {
+                    val audioNoteData = json.decodeFromString<AudioNoteData>(note.drawingData)
+
+                    // Convert AudioData back to AudioSection
+                    audioNoteData.audios.map { audioData ->
+                        AudioSection(
+                            id = audioData.timestamp,
+                            filePath = audioData.filePath,
+                            duration = audioData.duration,
+                            noteText = audioData.noteText  // ✅ LOAD THE NOTE TEXT
+                        )
+                    }
+                } else {
+                    emptyList()
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+                emptyList()
+            }
+        }
+    }
+
+    /**
+     * Delete audio note and cleanup audio files
+     */
+    suspend fun deleteAudioNote(noteId: Int, audioSections: List<AudioSection>) {
+        withContext(Dispatchers.IO) {
+            // Delete audio files from storage
+            audioSections.forEach { section ->
+                try {
+                    val file = java.io.File(section.filePath)
+                    if (file.exists()) {
+                        file.delete()
+                    }
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+            }
+
+            // Move to trash (or permanent delete)
+            repository.setDeleted(noteId)
+            refreshAfterChange()
+        }
     }
 }

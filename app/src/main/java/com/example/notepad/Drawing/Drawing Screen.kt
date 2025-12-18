@@ -13,11 +13,20 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.notepad.CreatNotes.FormattingManager
+import com.example.notepad.Drawing.toJson
+import com.example.notepad.Drawing.loadFromJson
+import com.example.notepad.NoteViewModel
+import androidx.lifecycle.viewmodel.compose.viewModel
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.decodeFromString
 
 // IMPORT YOUR MODULES
 import com.example.notepad.CreatNotes1.FormatMap
@@ -25,6 +34,9 @@ import com.example.notepad.CreatNotes1.FormatSpan
 import com.example.notepad.CreatNotes1.FormatState
 import com.example.notepad.CreatNotes1.FormattedTextEditor
 import com.example.notepad.CreatNotes1.FormattingToolbar
+import com.example.notepad.CreatNotes1.NoteOptionsBottomSheet
+import com.example.notepad.NoteType
+import kotlinx.coroutines.launch
 
 sealed class Section {
     abstract val id: Long
@@ -49,11 +61,13 @@ sealed class Section {
 @SuppressLint("UnusedMaterial3ScaffoldPaddingParameter")
 @Composable
 fun DrawingScreen(
-    onNavigateBack: () -> Unit
+    onNavigateBack: () -> Unit,
+    noteViewModel: NoteViewModel = viewModel(),
+    noteId: Int? = null  // ✅ NEW: for editing existing drawings
 ) {
     var title by remember { mutableStateOf("") }
 
-
+    var isFavorite by remember { mutableStateOf(false) }
     // SECTION LIST (Canvas + optional text)
     val sections = remember {
         mutableStateListOf<Section>(
@@ -78,6 +92,9 @@ fun DrawingScreen(
 
     // Forced recompose for the canvas
     var recomposeTrigger by remember { mutableStateOf(0) }
+    // One formatting manager for all text sections (or you can create individual ones)
+
+    val scope = rememberCoroutineScope()
 
     val isDrawingMode = activeCanvasId != null
 
@@ -92,10 +109,159 @@ fun DrawingScreen(
 
     val baseTextColor = MaterialTheme.colorScheme.onSurface
     val bottomBarIconColor = MaterialTheme.colorScheme.onSurfaceVariant
+    val formattingManager = remember { FormattingManager(baseTextColor) }
 
     val isDarkTheme = isSystemInDarkTheme()
     val drawingManager = remember(activeCanvas) {
         activeCanvas?.let { DrawingManager(it.canvasState) }
+    }
+    val isEditMode = noteId != null
+    var isLoading by remember { mutableStateOf(noteId != null) }
+    var selectedFolder by remember { mutableStateOf<com.example.notepad.FolderEntity?>(null) }
+    val folders by noteViewModel.folders.collectAsState()
+    val saveAndExit = {
+        if (title.isNotBlank() || sections.any {
+                (it is Section.CanvasSection && it.canvasState.paths.isNotEmpty()) ||
+                        (it is Section.TextSection && it.content.text.isNotBlank())
+            }) {
+
+            // ✅ NEW: Save complete section structure with order preserved
+            val sectionDataList = sections.mapNotNull { section ->
+                when (section) {
+                    is Section.CanvasSection -> {
+                        if (section.canvasState.paths.isNotEmpty()) {
+                            SectionData.Canvas(
+                                drawingData = DrawingData(
+                                    strokes = section.canvasState.paths.map { path ->
+                                        StrokeData(
+                                            id = "${System.currentTimeMillis()}_${Math.random()}",
+                                            points = path.points.map { PointData(it.x, it.y) },
+                                            color = colorToHex(path.color),
+                                            strokeWidth = path.strokeWidth,
+                                            toolType = if (path.isEraser) "ERASER" else "PEN"
+                                        )
+                                    },
+                                    bgColor = colorToHex(section.canvasState.bgColor),
+                                    showGrid = section.canvasState.showGrid
+                                )
+                            )
+                        } else null
+                    }
+                    is Section.TextSection -> {
+                        if (section.content.text.isNotBlank()) {
+                            SectionData.Text(content = section.content.text)
+                        } else null
+                    }
+                }
+            }
+
+            val drawingNoteData = DrawingNoteData(sections = sectionDataList)
+            val drawingDataJson = if (sectionDataList.isNotEmpty()) {
+                Json.encodeToString(drawingNoteData)
+            } else null
+
+            val folderToUse = selectedFolder ?: folders.firstOrNull()
+
+            if (folderToUse != null) {
+                if (isEditMode && noteId != null) {
+                    scope.launch {
+                        val existing = noteViewModel.getNoteById(noteId)
+                        if (existing != null) {
+                            noteViewModel.updateNote(
+                                existing.copy(
+                                    folderId = folderToUse.id,
+                                    title = title,
+                                    content = null,  // ✅ Don't use content field anymore
+                                    drawingData = drawingDataJson,  // ✅ Everything in drawingData
+                                    noteType = NoteType.DRAWING,
+                                    lastEditedAt = System.currentTimeMillis()
+                                )
+                            )
+                        }
+                    }
+                } else {
+                    noteViewModel.createNote(
+                        folderId = folderToUse.id,
+                        title = title,
+                        content = null,  // ✅ Don't use content field
+                        drawingData = drawingDataJson,  // ✅ Everything in drawingData
+                        noteType = NoteType.DRAWING
+                    )
+                }
+            }
+        }
+        onNavigateBack()
+    }
+    // Load existing drawing if editing
+    LaunchedEffect(noteId) {
+        if (noteId != null) {
+            val existingNote = noteViewModel.getNoteById(noteId)
+            if (existingNote != null) {
+                title = existingNote.title
+
+                sections.clear()
+
+                // ✅ NEW: Load complete section structure with order preserved
+                existingNote.drawingData?.let { jsonData ->
+                    try {
+                        val drawingNoteData = Json.decodeFromString<DrawingNoteData>(jsonData)
+
+                        drawingNoteData.sections.forEachIndexed { index, sectionData ->
+                            when (sectionData) {
+                                is SectionData.Canvas -> {
+                                    val canvasSection = Section.CanvasSection(
+                                        id = System.currentTimeMillis() + index
+                                    )
+                                    // Load drawing data
+                                    canvasSection.canvasState.paths.clear()
+                                    canvasSection.canvasState.paths.addAll(
+                                        sectionData.drawingData.strokes.map { stroke ->
+                                            DrawPath(
+                                                points = stroke.points.map { Offset(it.x, it.y) },
+                                                color = hexToColor(stroke.color),
+                                                strokeWidth = stroke.strokeWidth,
+                                                isEraser = stroke.toolType == "ERASER"
+                                            )
+                                        }
+                                    )
+                                    canvasSection.canvasState.bgColor = hexToColor(sectionData.drawingData.bgColor)
+                                    canvasSection.canvasState.showGrid = sectionData.drawingData.showGrid
+                                    canvasSection.canvasState.hasDrawn = true
+                                    sections.add(canvasSection)
+                                }
+                                is SectionData.Text -> {
+                                    val textSection = Section.TextSection(
+                                        id = System.currentTimeMillis() + index + 10000
+                                    )
+                                    textSection.content = TextFieldValue(sectionData.content)
+                                    sections.add(textSection)
+                                }
+                            }
+                        }
+                    } catch (e: Exception) {
+                        e.printStackTrace()
+                    }
+                }
+
+                // Ensure at least one canvas exists
+                if (sections.isEmpty()) {
+                    sections.add(Section.CanvasSection(id = System.currentTimeMillis()))
+                }
+            }
+            isLoading = false
+        }
+    }
+
+// Load folders
+    LaunchedEffect(Unit) {
+        noteViewModel.loadFolders()
+    }
+
+// Select default folder
+    LaunchedEffect(folders) {
+        if (!isEditMode && selectedFolder == null && folders.isNotEmpty()) {
+            selectedFolder = folders.first()
+        }
     }
 
 
@@ -110,7 +276,7 @@ fun DrawingScreen(
                     )
                 },
                 navigationIcon = {
-                    IconButton(onClick = onNavigateBack) {
+                    IconButton(onClick = { saveAndExit() }) {
                         Icon(Icons.Default.ArrowBack, contentDescription = "Back")
                     }
                 },
@@ -146,44 +312,11 @@ fun DrawingScreen(
                             )
                         }
                     } else {
-                        IconButton(onClick = { /* Share feature later */ }) {
-                            Icon(Icons.Default.Share, "Share")
-                        }
 
                         IconButton(onClick = { showMoreMenu = true }) {
                             Icon(Icons.Default.MoreVert, "More")
                         }
 
-                        DropdownMenu(
-                            expanded = showMoreMenu,
-                            onDismissRequest = { showMoreMenu = false }
-                        ) {
-                            DropdownMenuItem(
-                                text = { Text("Clear All Canvas") },
-                                onClick = {
-                                    sections.forEach {
-                                        if (it is Section.CanvasSection) {
-                                            it.canvasState.paths.clear()
-                                            it.canvasState.currentPath.clear()
-                                            it.canvasState.redoStack.clear()
-                                            it.canvasState.hasDrawn = false
-                                        }
-                                    }
-                                    recomposeTrigger++
-                                    showMoreMenu = false
-                                },
-                                leadingIcon = { Icon(Icons.Default.Delete, null) }
-                            )
-
-                            DropdownMenuItem(
-                                text = { Text("Export as Image") },
-                                onClick = {
-                                    // TODO: implement
-                                    showMoreMenu = false
-                                },
-                                leadingIcon = { Icon(Icons.Default.Image, null) }
-                            )
-                        }
                     }
                 }
             )
@@ -202,9 +335,8 @@ fun DrawingScreen(
                         showToolOptions = showToolOptions,
                         showColorPicker = showColorPicker,
                         showCanvasOptions = showCanvasOptions,
-                        canUndo = activeCanvas.canvasState.paths.isNotEmpty()
-                                || activeCanvas.canvasState.currentPath.isNotEmpty(),
-                        canRedo = activeCanvas.canvasState.redoStack.isNotEmpty(),
+                        canUndo = drawingManager?.canUndo() ?: false,
+                        canRedo = drawingManager?.canRedo() ?: false,
                         previousToolbarState = previousToolbarState,
                         onToolChange = { tool ->
                             currentTool = tool
@@ -323,10 +455,19 @@ fun DrawingScreen(
                 }
             }
         }
-    ) { padding ->
+    )
 
-        Column(
-            modifier = Modifier
+    { padding ->
+
+
+
+        if (isLoading) {
+            Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator()
+            }
+        } else {
+            Column(
+                modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
                 .verticalScroll(rememberScrollState())
@@ -438,7 +579,9 @@ fun DrawingScreen(
                                 },
                                 onCheckboxToggle = { toggledValue ->
                                     section.content = toggledValue
-                                }
+                                },
+                                formattingManager = formattingManager
+
                             )
                         }
 
@@ -449,6 +592,47 @@ fun DrawingScreen(
 
             Spacer(Modifier.height(80.dp))
         }
+    }
+}
+// More options bottom sheet
+    NoteOptionsBottomSheet(
+        showSheet = showMoreMenu,
+        isFavorite = isFavorite,
+        onDismiss = { showMoreMenu = false },
+        onShare = { /* TODO: Implement share */ },
+        onPin = { /* TODO: Implement pin */ },
+        onToggleFavorite = { isFavorite = !isFavorite },
+        onDelete = {
+            sections.forEach {
+                if (it is Section.CanvasSection) {
+                    it.canvasState.paths.clear()
+                    it.canvasState.currentPath.clear()
+                    it.canvasState.redoStack.clear()
+                    it.canvasState.hasDrawn = false
+                }
+            }
+            recomposeTrigger++
+        }
+    )
+}
+
+
+
+// Helper functions for color conversion
+fun colorToHex(color: Color): String {
+    val red = (color.red * 255).toInt()
+    val green = (color.green * 255).toInt()
+    val blue = (color.blue * 255).toInt()
+    val alpha = (color.alpha * 255).toInt()
+    return String.format("#%02X%02X%02X%02X", alpha, red, green, blue)
+}
+
+fun hexToColor(hex: String): Color {
+    return try {
+        val colorInt = android.graphics.Color.parseColor(hex)
+        Color(colorInt)
+    } catch (e: Exception) {
+        Color.Black
     }
 }
 

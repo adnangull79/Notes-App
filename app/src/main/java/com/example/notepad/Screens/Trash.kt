@@ -33,18 +33,20 @@ fun TrashScreen(navController: NavController, noteViewModel: NoteViewModel) {
 
     val folders by noteViewModel.folders.collectAsState()
 
-    // ✅ Local state to avoid blinking
+    // Local list managed only by TrashScreen
     var trashNotes by remember { mutableStateOf<List<NoteEntity>>(emptyList()) }
 
-    // Load trash when screen shows
+    // FIX: Listen only to trash notes, not all notes
+    val trashFlow by noteViewModel.notes.collectAsState()
+
+    // Load trash when screen is opened
     LaunchedEffect(Unit) {
         noteViewModel.loadTrashNotes()
     }
 
-    // Update UI when notes change
-    val allNotes by noteViewModel.notes.collectAsState()
-    LaunchedEffect(allNotes) {
-        trashNotes = allNotes.filter { it.isDeleted }
+    // Update local trash list whenever trashFlow updates
+    LaunchedEffect(trashFlow) {
+        trashNotes = trashFlow
     }
 
     Scaffold(
@@ -58,10 +60,12 @@ fun TrashScreen(navController: NavController, noteViewModel: NoteViewModel) {
                 },
                 actions = {
                     IconButton(onClick = {
-                        viewMode = if (viewMode == TrashViewMode.LIST) TrashViewMode.GRID else TrashViewMode.LIST
+                        viewMode = if (viewMode == TrashViewMode.LIST)
+                            TrashViewMode.GRID else TrashViewMode.LIST
                     }) {
                         Icon(
-                            imageVector = if (viewMode == TrashViewMode.LIST) Icons.Default.GridView else Icons.Default.ViewAgenda,
+                            imageVector = if (viewMode == TrashViewMode.LIST)
+                                Icons.Default.GridView else Icons.Default.ViewAgenda,
                             contentDescription = null
                         )
                     }
@@ -79,7 +83,6 @@ fun TrashScreen(navController: NavController, noteViewModel: NoteViewModel) {
             }
         } else {
 
-
             if (viewMode == TrashViewMode.LIST) {
                 LazyColumn(
                     modifier = Modifier
@@ -94,7 +97,7 @@ fun TrashScreen(navController: NavController, noteViewModel: NoteViewModel) {
                             folders = folders,
                             isSelected = false,
                             isSelectionMode = false,
-                            onClick = {}, // Cannot open from trash
+                            onClick = {},
                             onLongClick = { sheetNote = note }
                         )
                     }
@@ -125,7 +128,7 @@ fun TrashScreen(navController: NavController, noteViewModel: NoteViewModel) {
         }
     }
 
-    // Bottom Sheet Actions
+    // Bottom Sheet
     if (sheetNote != null) {
         ModalBottomSheet(
             onDismissRequest = { sheetNote = null },
@@ -133,6 +136,7 @@ fun TrashScreen(navController: NavController, noteViewModel: NoteViewModel) {
             containerColor = MaterialTheme.colorScheme.surface
         ) {
             val n = sheetNote!!
+
             Column(Modifier.padding(bottom = 20.dp)) {
 
                 SheetActionRow(
@@ -140,6 +144,10 @@ fun TrashScreen(navController: NavController, noteViewModel: NoteViewModel) {
                     label = "Restore",
                     onClick = {
                         noteViewModel.restoreFromTrash(n.id)
+
+                        // Remove from local list immediately
+                        trashNotes = trashNotes.filter { it.id != n.id }
+
                         sheetNote = null
                     }
                 )
@@ -150,6 +158,10 @@ fun TrashScreen(navController: NavController, noteViewModel: NoteViewModel) {
                     contentColor = MaterialTheme.colorScheme.error,
                     onClick = {
                         noteViewModel.permanentlyDelete(n.id)
+
+                        // Remove from local list immediately
+                        trashNotes = trashNotes.filter { it.id != n.id }
+
                         sheetNote = null
                     }
                 )

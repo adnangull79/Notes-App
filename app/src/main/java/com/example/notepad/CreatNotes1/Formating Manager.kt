@@ -6,24 +6,17 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.input.TextFieldValue
-import com.example.notepad.CreatNotes1.FormatSpan
-import com.example.notepad.CreatNotes1.FormatState
-import com.example.notepad.CreatNotes1.TextHistory
-import com.example.notepad.CreatNotes1.adjustSpansForDeletion
-import com.example.notepad.CreatNotes1.adjustSpansForInsertion
-import com.example.notepad.CreatNotes1.commonPrefixLength
-import com.example.notepad.CreatNotes1.commonSuffixLength
-import com.example.notepad.CreatNotes1.composeActiveStyle
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.font.FontStyle
+import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.unit.sp
+import com.example.notepad.CreatNotes1.*
 import kotlin.math.max
 import kotlin.math.min
-import androidx.compose.ui.unit.sp
-import androidx.compose.ui.unit.sp
-
-
 
 /**
- * FormattingManager - Handles all formatting logic and history management
- * Keeps business logic separate from UI
+ * FormattingManager - FIXED VERSION
+ * Handles all formatting logic and history management properly
  */
 class FormattingManager(
     private val textColor: Color
@@ -42,11 +35,19 @@ class FormattingManager(
     var historyIndex by mutableStateOf(-1)
         private set
 
+    // Flag to prevent pushing duplicate history during restoration
+    private var isRestoringHistory = false
+
     // Initialize history with empty state
     fun initializeHistory(initialContent: TextFieldValue) {
-        historyList = emptyList()
-        historyIndex = -1
-        pushHistory(initialContent, emptyList(), FormatState())
+        historyList = listOf(
+            TextHistory(
+                value = initialContent.copy(),
+                formatSpans = emptyList(),
+                formatState = FormatState()
+            )
+        )
+        historyIndex = 0
     }
 
     // Update format state
@@ -59,15 +60,38 @@ class FormattingManager(
         formatMap = newMap
     }
 
-    // Push to history
+    // Push to history - only if not currently restoring
     fun pushHistory(value: TextFieldValue, spans: List<FormatSpan>, state: FormatState) {
-        val snapshot = TextHistory(value.copy(), spans.map { it.copy() }, state.copy())
-        val newHistory = historyList.take(historyIndex + 1) + snapshot
+        if (isRestoringHistory) return
+
+        // Don't push duplicate history
+        if (historyIndex >= 0 && historyIndex < historyList.size) {
+            val current = historyList[historyIndex]
+            if (current.value.text == value.text &&
+                current.formatSpans == spans &&
+                current.formatState == state) {
+                return
+            }
+        }
+
+        // Remove any history after current index (branching)
+        val newHistory = historyList.take(historyIndex + 1).toMutableList()
+
+        // Add new snapshot
+        newHistory.add(
+            TextHistory(
+                value = value.copy(),
+                formatSpans = spans.map { it.copy() },
+                formatState = state.copy()
+            )
+        )
+
+        // Keep only last 100 entries
         historyList = newHistory.takeLast(100)
         historyIndex = historyList.lastIndex
     }
 
-    // Apply formatting to selected text
+    // Apply formatting to selected text - FIXED
     fun applyFormatting(
         content: TextFieldValue,
         start: Int,
@@ -78,14 +102,20 @@ class FormattingManager(
 
         val newFormatList = formatMap.toMutableList()
 
-        // Remove ALL overlapping spans first
+        // Remove overlapping spans in the selection
         newFormatList.removeAll { it.start < end && it.end > start }
 
-        // Add the new style
+        // Add new formatting span
         newFormatList.add(FormatSpan(start, end, newStyle))
 
-        formatMap = newFormatList.filter { it.end > it.start }.sortedBy { it.start }
-        pushHistory(content, formatMap, formatState)
+        // Clean and sort
+        val cleanedMap = newFormatList.filter { it.end > it.start }.sortedBy { it.start }
+
+        // Update formatMap - this will trigger recomposition in FormattedTextEditor
+        formatMap = cleanedMap
+
+        // Push to history
+        pushHistory(content, cleanedMap, formatState)
     }
 
     // Handle text changes and adjust spans
@@ -119,38 +149,64 @@ class FormattingManager(
         // Adjust spans for insertion
         if (insertedLen > 0) {
             adjustSpansForInsertion(spans, prefixLen, insertedLen)
+
             // Apply currently active style to newly typed text
             composeActiveStyle(formatState, textColor)?.let { style ->
                 spans.add(FormatSpan(prefixLen, prefixLen + insertedLen, style))
             }
         }
 
-        spans = spans.filter { it.end > it.start }.sortedBy { it.start }.toMutableList()
-        return spans
+        // Clean and return
+        val cleanedSpans = spans.filter { it.end > it.start }.sortedBy { it.start }
+
+        // Update internal state
+        formatMap = cleanedSpans
+
+        return cleanedSpans
     }
 
-    // Undo functionality
+    // Undo functionality - FIXED
     fun undo(): Triple<TextFieldValue, List<FormatSpan>, FormatState>? {
-        if (historyIndex > 0) {
-            historyIndex--
-            val snap = historyList[historyIndex]
-            formatMap = snap.formatSpans.map { it.copy() }
-            formatState = snap.formatState.copy()
-            return Triple(snap.value, formatMap, formatState)
-        }
-        return null
+        if (historyIndex <= 0) return null
+
+        isRestoringHistory = true
+        historyIndex--
+
+        val snapshot = historyList[historyIndex]
+
+        // Update all states
+        formatMap = snapshot.formatSpans.map { it.copy() }
+        formatState = snapshot.formatState.copy()
+
+        isRestoringHistory = false
+
+        return Triple(
+            snapshot.value.copy(),
+            formatMap,
+            formatState
+        )
     }
 
-    // Redo functionality
+    // Redo functionality - FIXED
     fun redo(): Triple<TextFieldValue, List<FormatSpan>, FormatState>? {
-        if (historyIndex < historyList.lastIndex) {
-            historyIndex++
-            val snap = historyList[historyIndex]
-            formatMap = snap.formatSpans.map { it.copy() }
-            formatState = snap.formatState.copy()
-            return Triple(snap.value, formatMap, formatState)
-        }
-        return null
+        if (historyIndex >= historyList.lastIndex) return null
+
+        isRestoringHistory = true
+        historyIndex++
+
+        val snapshot = historyList[historyIndex]
+
+        // Update all states
+        formatMap = snapshot.formatSpans.map { it.copy() }
+        formatState = snapshot.formatState.copy()
+
+        isRestoringHistory = false
+
+        return Triple(
+            snapshot.value.copy(),
+            formatMap,
+            formatState
+        )
     }
 
     // Check if undo is available
@@ -169,41 +225,39 @@ class FormattingManager(
         val end = max(selection.start, selection.end)
 
         if (start < end) {
-            val style = if (color == Color.Unspecified) {
-                // Reset to default with preserved formatting
-                SpanStyle(
-                    color = textColor,
-                    fontWeight = if (formatState.isBold || formatState.isH1 || formatState.isH2)
-                        androidx.compose.ui.text.font.FontWeight.Bold
-                    else androidx.compose.ui.text.font.FontWeight.Normal,
-                    fontStyle = if (formatState.isItalic)
-                        androidx.compose.ui.text.font.FontStyle.Italic
-                    else androidx.compose.ui.text.font.FontStyle.Normal,
-                    textDecoration = when {
-                        formatState.isUnderline && formatState.isStrikethrough ->
-                            androidx.compose.ui.text.style.TextDecoration.combine(
-                                listOf(
-                                    androidx.compose.ui.text.style.TextDecoration.Underline,
-                                    androidx.compose.ui.text.style.TextDecoration.LineThrough
-                                )
+            val style = SpanStyle(
+                color = if (color == Color.Unspecified) textColor else color,
+                fontWeight = if (formatState.isBold || formatState.isH1 || formatState.isH2)
+                    FontWeight.Bold
+                else FontWeight.Normal,
+                fontStyle = if (formatState.isItalic)
+                    FontStyle.Italic
+                else FontStyle.Normal,
+                textDecoration = when {
+                    formatState.isUnderline && formatState.isStrikethrough ->
+                        TextDecoration.combine(
+                            listOf(
+                                TextDecoration.Underline,
+                                TextDecoration.LineThrough
                             )
-                        formatState.isUnderline -> androidx.compose.ui.text.style.TextDecoration.Underline
-                        formatState.isStrikethrough -> androidx.compose.ui.text.style.TextDecoration.LineThrough
-                        else -> androidx.compose.ui.text.style.TextDecoration.None
-                    },
-                    fontSize = when {
-                        formatState.isH1 -> 28.sp
-                        formatState.isH2 -> 22.sp
-                        else -> 16.sp
-                    }
-                    ,
-                    background = formatState.highlightColor
-                )
-            } else {
-                SpanStyle(color = color)
-            }
+                        )
+                    formatState.isUnderline -> TextDecoration.Underline
+                    formatState.isStrikethrough -> TextDecoration.LineThrough
+                    else -> TextDecoration.None
+                },
+                fontSize = when {
+                    formatState.isH1 -> 28.sp
+                    formatState.isH2 -> 22.sp
+                    else -> 16.sp
+                },
+                background = if (formatState.highlightColor != Color.Unspecified)
+                    formatState.highlightColor
+                else
+                    Color.Unspecified
+            )
             applyFormatting(content, start, end, style)
         }
+
         formatState = formatState.copy(textColor = color)
     }
 
@@ -217,43 +271,41 @@ class FormattingManager(
         val end = max(selection.start, selection.end)
 
         if (start < end) {
-            val style = if (color == Color.Unspecified) {
-                // Reset highlight with preserved formatting
-                SpanStyle(
-                    color = if (formatState.textColor != Color.Unspecified)
-                        formatState.textColor
-                    else textColor,
-                    fontWeight = if (formatState.isBold || formatState.isH1 || formatState.isH2)
-                        androidx.compose.ui.text.font.FontWeight.Bold
-                    else androidx.compose.ui.text.font.FontWeight.Normal,
-                    fontStyle = if (formatState.isItalic)
-                        androidx.compose.ui.text.font.FontStyle.Italic
-                    else androidx.compose.ui.text.font.FontStyle.Normal,
-                    textDecoration = when {
-                        formatState.isUnderline && formatState.isStrikethrough ->
-                            androidx.compose.ui.text.style.TextDecoration.combine(
-                                listOf(
-                                    androidx.compose.ui.text.style.TextDecoration.Underline,
-                                    androidx.compose.ui.text.style.TextDecoration.LineThrough
-                                )
+            val style = SpanStyle(
+                color = if (formatState.textColor != Color.Unspecified)
+                    formatState.textColor
+                else textColor,
+                fontWeight = if (formatState.isBold || formatState.isH1 || formatState.isH2)
+                    FontWeight.Bold
+                else FontWeight.Normal,
+                fontStyle = if (formatState.isItalic)
+                    FontStyle.Italic
+                else FontStyle.Normal,
+                textDecoration = when {
+                    formatState.isUnderline && formatState.isStrikethrough ->
+                        TextDecoration.combine(
+                            listOf(
+                                TextDecoration.Underline,
+                                TextDecoration.LineThrough
                             )
-                        formatState.isUnderline -> androidx.compose.ui.text.style.TextDecoration.Underline
-                        formatState.isStrikethrough -> androidx.compose.ui.text.style.TextDecoration.LineThrough
-                        else -> androidx.compose.ui.text.style.TextDecoration.None
-                    },
-                    fontSize = when {
-                        formatState.isH1 -> 28.sp
-                        formatState.isH2 -> 22.sp
-                        else -> 16.sp
-
-                    },
-                    background = Color.Unspecified
-                )
-            } else {
-                SpanStyle(background = color)
-            }
+                        )
+                    formatState.isUnderline -> TextDecoration.Underline
+                    formatState.isStrikethrough -> TextDecoration.LineThrough
+                    else -> TextDecoration.None
+                },
+                fontSize = when {
+                    formatState.isH1 -> 28.sp
+                    formatState.isH2 -> 22.sp
+                    else -> 16.sp
+                },
+                background = if (color == Color.Unspecified)
+                    Color.Unspecified
+                else
+                    color
+            )
             applyFormatting(content, start, end, style)
         }
+
         formatState = formatState.copy(highlightColor = color)
     }
 }

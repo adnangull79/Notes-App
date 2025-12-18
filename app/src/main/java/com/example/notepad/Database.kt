@@ -8,7 +8,7 @@ import androidx.room.TypeConverters
 
 @Database(
     entities = [FolderEntity::class, NoteEntity::class],
-    version = 3, // ✅ KEEP at 3 because we added new boolean columns
+    version = 4, // ✅ CHANGED from 3 to 4
     exportSchema = false
 )
 @TypeConverters(Converters::class)
